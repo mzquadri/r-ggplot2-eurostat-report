@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  render:
+    name: render the report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.4.2"
+          use-public-rspm: true
+
+      # Posit's public package manager serves prebuilt Linux binaries, so these
+      # install in seconds rather than compiling. knitr and rmarkdown are
+      # Quarto's requirement for executing R chunks, not the report's.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::jsonlite
+            any::ggplot2
+            any::knitr
+            any::rmarkdown
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: "1.6.39"
+
+      # The render is the test. report.qmd calls verify_decoding() in its setup
+      # chunk, which re-encodes every decoded JSON-stat offset and compares it
+      # with the value the response holds there - so a broken decode fails the
+      # build instead of producing a plausible chart.
+      - name: Render
+        run: quarto render report.qmd --to html
+
+      - name: The rendered report is non-trivial and self-contained
+        run: |
+          test -f report.html
+          # embed-resources inlines the figures, so the output is large. A
+          # render that silently produced an empty shell would pass `test -f`.
+          size=$(stat -c%s report.html)
+          echo "report.html is $size bytes"
+          test "$size" -gt 500000
+
+      # The committed snapshot is what the report renders from, and its hash is
+      # quoted in the README and in PROVENANCE.md. Checked here so the three
+      # cannot drift apart.
+      - name: The data matches its recorded hash
+        run: |
+          actual=$(sha256sum data/raw/tran_hv_psmod.json | cut -d' ' -f1)
+          echo "actual   $actual"
+          grep -q "$actual" data/raw/PROVENANCE.md
+          grep -q "$actual" README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: report.html

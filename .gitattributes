@@ -1,0 +1,8 @@
+# The JSON snapshot's SHA-256 is recorded in data/raw/PROVENANCE.md and in the
+# README. autocrlf on Windows would rewrite it on checkout and the recorded
+# hash would no longer describe the file.
+*.json  text eol=lf
+*.csv   text eol=lf
+*.R     text eol=lf
+*.qmd   text eol=lf
+*.md    text eol=lf

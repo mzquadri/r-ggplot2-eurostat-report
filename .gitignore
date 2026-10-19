@@ -1,0 +1,7 @@
+# Quarto's intermediate files. report.html is committed deliberately: it is the
+# deliverable, and it is self-contained.
+report_files/
+.quarto/
+*.rmarkdown
+.Rhistory
+.RData

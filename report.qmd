@@ -1,0 +1,287 @@
+---
+# No year range in the title. It was "1990 to 2023" and the snapshot actually
+# reaches 2024, which is the kind of detail that goes stale silently every time
+# Eurostat publishes. The covered range is computed from the data in the first
+# section instead.
+title: "Modal split of inland passenger transport in the EU"
+subtitle: "Eurostat tran_hv_psmod"
+author: "Mohd Zamin Quadri"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    fig-width: 9
+    fig-height: 5
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+source("R/tidy_modal_split.R")
+library(ggplot2)
+
+RAW <- "data/raw/tran_hv_psmod.json"
+
+frame <- read_jsonstat(RAW)
+verify_decoding(frame, RAW)   # stops the render if the index arithmetic is wrong
+modal <- modal_split(frame)
+
+# One palette, used the same way in every figure: cars are the series the
+# report is about, so they stay the strongest colour throughout and the other
+# two modes stay muted. Changing colour between charts would imply the series
+# changed meaning.
+MODE_COLOURS <- c(
+  "Passenger cars" = "#4C7CAE",
+  "Trains" = "#4E9A92",
+  "Motor coaches, buses and trolley buses" = "#A99CD6"
+)
+
+theme_report <- function() {
+  theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      plot.title.position = "plot",
+      plot.caption = element_text(colour = "grey40", hjust = 0),
+      legend.position = "top",
+      legend.title = element_blank()
+    )
+}
+
+EUROSTAT_CAPTION <- paste0(
+  "Source: Eurostat, Modal split of inland passenger transport (tran_hv_psmod). ",
+  "Data as published ", substr(attr(frame, "updated"), 1, 10), "."
+)
+```
+
+## What this is
+
+A worked example of reading an official statistical API in R and reporting what
+it says, with every number in the prose computed from the data rather than typed
+in.
+
+The dataset is Eurostat's **modal split of inland passenger transport**: for each
+country and year, the share of inland passenger-kilometres travelled by
+passenger car, by train, and by motor coach, bus or trolley bus. The three
+shares sum to 100% by construction, so this measures *how* people travel rather
+than *how much*.
+
+The raw response is committed at `data/raw/tran_hv_psmod.json` with its SHA-256
+and retrieval date in `data/raw/PROVENANCE.md`, so the report renders offline
+and the figures cannot drift from the numbers underneath them.
+
+```{r coverage}
+#| echo: false
+countries <- modal[!modal$is_aggregate, ]
+n_countries <- length(unique(countries$geo))
+year_range <- range(modal$year)
+```
+
+The snapshot covers **`r n_countries` countries** and the years
+**`r year_range[1]` to `r year_range[2]`**, though coverage is uneven: not every
+country reports every year, and the series are sparse rather than rectangular.
+
+## How complete is the data?
+
+Worth establishing before drawing any trend, because a line chart over a sparse
+series invites the reader to interpolate through years nobody measured.
+
+```{r completeness}
+#| fig-cap: "Reporting completeness by year. Each cell is one country-year for passenger cars."
+cars <- countries[countries$vehicle == "CAR", ]
+
+# as.data.frame(table(...)) makes `year` a factor whatever stringsAsFactors
+# says, and as.integer() on a factor returns the level index rather than the
+# label. Going via as.character() is what keeps these actual years.
+per_year <- as.data.frame(table(year = cars$year), stringsAsFactors = FALSE)
+per_year$year <- as.integer(as.character(per_year$year))
+names(per_year)[2] <- "n_countries"
+
+ggplot(per_year, aes(x = year, y = n_countries)) +
+  geom_col(fill = MODE_COLOURS[["Passenger cars"]], width = 0.7) +
+  scale_x_continuous(breaks = seq(1990, 2025, 5)) +
+  labs(
+    title = "Countries reporting a car share, by year",
+    subtitle = "Coverage thins out at both ends of the series",
+    x = NULL, y = "Countries reporting",
+    caption = EUROSTAT_CAPTION
+  ) +
+  theme_report()
+```
+
+```{r best-year}
+#| echo: false
+best <- per_year[which.max(per_year$n_countries), ]
+latest_full <- max(per_year$year[per_year$n_countries >= 0.9 * max(per_year$n_countries)])
+```
+
+Coverage peaks at **`r best$n_countries` countries in `r best$year`**. The most
+recent year with at least 90% of that peak is **`r latest_full`**, which is the
+year used below wherever a single-year comparison is made. Picking the latest
+year present instead would compare a handful of early reporters against each
+other.
+
+## The long-run picture
+
+```{r eu-trend}
+#| fig-cap: "EU-level modal split over time, using the EU27_2020 aggregate."
+eu <- modal[modal$geo == "EU27_2020", ]
+
+ggplot(eu, aes(x = year, y = value, colour = vehicle_label)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.4) +
+  scale_colour_manual(values = MODE_COLOURS) +
+  scale_y_continuous(limits = c(0, 100), labels = function(x) paste0(x, "%")) +
+  labs(
+    title = "The car's share of EU inland passenger travel has barely moved",
+    subtitle = "Share of inland passenger-kilometres, EU27 (2020 definition)",
+    x = NULL, y = NULL,
+    caption = EUROSTAT_CAPTION
+  ) +
+  theme_report()
+```
+
+```{r eu-numbers}
+#| echo: false
+eu_car <- eu[eu$vehicle == "CAR", ]
+eu_car <- eu_car[order(eu_car$year), ]
+first_car <- eu_car[1, ]
+last_car <- eu_car[nrow(eu_car), ]
+car_change <- last_car$value - first_car$value
+```
+
+The car share stood at **`r sprintf("%.1f%%", first_car$value)`** in
+`r first_car$year` and **`r sprintf("%.1f%%", last_car$value)`** in
+`r last_car$year`, a change of **`r sprintf("%+.1f percentage points", car_change)`**
+across `r last_car$year - first_car$year` years. Whatever has changed in European
+transport policy over that period, it has not changed what share of distance is
+driven.
+
+## Who depends on cars most?
+
+```{r ranking}
+#| fig-cap: "Car share by country in the reference year, highest first."
+ref <- cars[cars$year == latest_full, ]
+ref <- ref[order(ref$value), ]
+ref$geo_label <- factor(ref$geo_label, levels = ref$geo_label)
+
+ggplot(ref, aes(x = value, y = geo_label)) +
+  geom_col(
+    aes(fill = geo == "DE"),
+    width = 0.7, show.legend = FALSE
+  ) +
+  scale_fill_manual(values = c("TRUE" = "#7A6BA8", "FALSE" = "#9DB8D2")) +
+  geom_text(
+    aes(label = sprintf("%.1f", value)),
+    hjust = -0.15, size = 3, colour = "grey30"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 100), labels = function(x) paste0(x, "%"), expand = c(0, 0)
+  ) +
+  labs(
+    title = paste0("Share of passenger-kilometres travelled by car, ", latest_full),
+    subtitle = "Germany highlighted",
+    x = NULL, y = NULL,
+    caption = EUROSTAT_CAPTION
+  ) +
+  theme_report() +
+  theme(panel.grid.major.y = element_blank(), panel.grid.major.x = element_line())
+```
+
+```{r ranking-numbers}
+#| echo: false
+ranked <- ref[order(-ref$value), ]
+top <- ranked[1, ]
+bottom <- ranked[nrow(ranked), ]
+de <- ranked[ranked$geo == "DE", ]
+de_rank <- which(ranked$geo == "DE")
+spread <- top$value - bottom$value
+```
+
+In `r latest_full` the range runs from **`r sprintf("%.1f%%", top$value)`
+(`r top$geo_label`)** down to **`r sprintf("%.1f%%", bottom$value)`
+(`r bottom$geo_label`)**, a spread of
+**`r sprintf("%.1f percentage points", spread)`**. Germany sits at
+**`r sprintf("%.1f%%", de$value)`**, ranking **`r de_rank` of `r nrow(ranked)`**.
+
+## Where rail actually gained
+
+```{r rail-change}
+#| fig-cap: "Change in rail share between each country's first and last reported year."
+trains <- countries[countries$vehicle == "TRN", ]
+
+# Each country's own first and last reported year, not a fixed window. A fixed
+# window would drop every country whose series starts late, which is most of
+# the 2004 and 2007 accession states.
+change <- do.call(rbind, lapply(split(trains, trains$geo), function(g) {
+  g <- g[order(g$year), ]
+  if (nrow(g) < 2) return(NULL)
+  data.frame(
+    geo = g$geo[1],
+    geo_label = g$geo_label[1],
+    from_year = g$year[1],
+    to_year = g$year[nrow(g)],
+    change = g$value[nrow(g)] - g$value[1],
+    stringsAsFactors = FALSE
+  )
+}))
+
+change <- change[order(change$change), ]
+change$geo_label <- factor(change$geo_label, levels = change$geo_label)
+
+ggplot(change, aes(x = change, y = geo_label, fill = change > 0)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  scale_fill_manual(values = c("TRUE" = "#4E9A92", "FALSE" = "#C9A8A8")) +
+  geom_vline(xintercept = 0, colour = "grey30", linewidth = 0.4) +
+  labs(
+    title = "Change in rail's share of passenger travel",
+    subtitle = "Each country between its own first and last reported year, so the windows differ",
+    x = "Percentage point change", y = NULL,
+    caption = EUROSTAT_CAPTION
+  ) +
+  theme_report() +
+  theme(panel.grid.major.y = element_blank(), panel.grid.major.x = element_line())
+```
+
+```{r rail-numbers}
+#| echo: false
+gained <- sum(change$change > 0)
+lost <- sum(change$change < 0)
+biggest <- change[which.max(change$change), ]
+```
+
+**`r gained` of `r nrow(change)` countries** increased rail's share and
+**`r lost`** reduced it. The largest gain is **`r biggest$geo_label`**, up
+**`r sprintf("%.1f percentage points", biggest$change)`** between
+`r biggest$from_year` and `r biggest$to_year`.
+
+Each bar covers a different span of years, which is stated on the chart rather
+than hidden: a country reporting only since 2010 is not comparable with one
+reporting since 1990, and forcing a common window would have discarded most of
+the newer member states entirely.
+
+## What this does not show
+
+- **Shares, not volumes.** A falling car share is consistent with more driving,
+  if rail grew faster. Nothing here measures total distance travelled.
+- **Inland transport only.** Air and sea are excluded by the dataset's own
+  definition, so this is not a complete picture of how people travel between
+  countries.
+- **Unequal windows.** Countries enter the series at different dates. Every
+  comparison above either uses a single stated year or labels the span it
+  covers.
+- **No causal claim.** The report describes what the series contains. It does
+  not attribute any change to any policy.
+
+## Reproducing this
+
+```{r session}
+#| echo: false
+sessionInfo()
+```
