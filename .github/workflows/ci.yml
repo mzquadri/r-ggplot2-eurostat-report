@@ -31,9 +31,16 @@ jobs:
             any::knitr
             any::rmarkdown
 
+      # No version pin here, deliberately. The runners ship a Quarto newer than
+      # the 1.6.39 that Dockerfile pins, and asking the action for that exact
+      # version makes apt attempt a downgrade, which it refuses:
+      #
+      #   E: Packages were downgraded and -y was used without --allow-downgrades
+      #
+      # The Dockerfile is the reproducible path and keeps its pin. CI's job is
+      # to prove the report still renders on a current toolchain, which is a
+      # more useful thing for it to check than matching a pinned version.
       - uses: quarto-dev/quarto-actions/setup@v2
-        with:
-          version: "1.6.39"
 
       # The render is the test. report.qmd calls verify_decoding() in its setup
       # chunk, which re-encodes every decoded JSON-stat offset and compares it
